@@ -1,12 +1,10 @@
-// If backend and frontend are hosted together on Vercel, keep this empty:
+// UPDATE THIS TO YOUR RENDER URL:
 const API_BASE = "https://nexoprompt.onrender.com"; 
 
-// If backend runs local, change to:  "http://localhost:3001"
-// Example: const API_BASE = "http://localhost:3001";
+// FINAL API PATH
+const API_PATH = API_BASE + "/api/generate";
 
-const API_PATH = (API_BASE || "") + "/api/generate";
-
-const $ = id => document.getElementById(id);
+const $ = (x) => document.getElementById(x);
 const status = $("status");
 const results = $("results");
 
@@ -31,43 +29,54 @@ async function generatePrompts() {
       body: JSON.stringify({ user_text, audience, tone, constraints })
     });
 
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error);
+    const raw = await res.text();
+    let json;
 
-    const text = json.data || "";
-    displayResults(text);
+    try { json = JSON.parse(raw); }
+    catch { json = null; }
+
+    if (!json) {
+      throw new Error("Server sent invalid JSON: " + raw.slice(0, 200));
+    }
+
+    if (!json.success) {
+      const groqStatus = json.groq_status || "unknown";
+      const body = JSON.stringify(json.groq_body || json.error).slice(0, 600);
+      throw new Error(`Groq Error (${groqStatus}): ${body}`);
+    }
+
+    displayResults(json.data);
+
   } catch (err) {
     alert("Error: " + err.message);
-  }
+    console.error(err);
 
-  $("generateBtn").disabled = false;
-  status.textContent = "";
+  } finally {
+    $("generateBtn").disabled = false;
+    status.textContent = "";
+  }
 }
 
 function displayResults(text) {
-  // try to split text by headings
-  const short = text.match(/short[\s\S]*?(?=balanced|advanced|$)/i);
-  const balanced = text.match(/balanced[\s\S]*?(?=advanced|short|$)/i);
-  const advanced = text.match(/advanced[\s\S]*/i);
+  $("results").classList.remove("hidden");
 
-  $("shortPrompt").textContent = short ? short[0].trim() : "(not found)";
-  $("balancedPrompt").textContent = balanced ? balanced[0].trim() : "(not found)";
-  $("advancedPrompt").textContent = advanced ? advanced[0].trim() : "(not found)";
-
-  results.classList.remove("hidden");
+  $("shortPrompt").textContent = extract(text, "short");
+  $("balancedPrompt").textContent = extract(text, "balanced");
+  $("advancedPrompt").textContent = extract(text, "advanced");
 }
 
-// copy buttons
-document.addEventListener("click", e => {
+function extract(text, key) {
+  const match = new RegExp(key + "[\\s\\S]*?(?=short|balanced|advanced|$)", "i").exec(text);
+  return match ? match[0].trim() : "(not found)";
+}
+
+document.addEventListener("click", (e) => {
   if (e.target.classList.contains("copy-btn")) {
-    const target = $(e.target.dataset.target);
-    navigator.clipboard.writeText(target.textContent).then(() => {
-      e.target.textContent = "Copied!";
-      setTimeout(() => (e.target.textContent = "Copy"), 1200);
-    });
+    const id = e.target.dataset.target;
+    navigator.clipboard.writeText($(id).textContent);
+    e.target.textContent = "Copied!";
+    setTimeout(() => (e.target.textContent = "Copy"), 1000);
   }
 });
 
-// bind button
 $("generateBtn").addEventListener("click", generatePrompts);
-
