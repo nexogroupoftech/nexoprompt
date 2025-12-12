@@ -1,3 +1,4 @@
+// backend/app.js
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
@@ -9,86 +10,66 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
 
-// SYSTEM PROMPT
+// set the model once here (change if needed)
+const MODEL = "llama3-8b";
+
+console.log("Starting backend. MODEL =", MODEL);
+
 const SYSTEM_PROMPT = `
 You are PromptAdvisor, a professional prompt engineer.
-Create SHORT, BALANCED, and ADVANCED prompts based on user input.
-Keep output clear and structured.
+Produce three prompts: SHORT (1-2 lines), BALANCED (3-5 lines), ADVANCED (5-8 lines).
+Be concise and structured.
 `;
 
-// HEALTH CHECK
-app.get("/", (req, res) => {
-  res.json({ status: "Backend running correctly!" });
-});
+// health
+app.get('/', (req, res) => res.json({ status: "ok", model: MODEL }));
 
-// MAIN AI ROUTE
-app.post("/api/generate", async (req, res) => {
+// main route
+app.post('/api/generate', async (req, res) => {
   try {
     const { user_text, audience, tone, constraints } = req.body || {};
-
-    const userMessage = `
-User text: ${user_text}
-Audience: ${audience}
-Tone: ${tone}
-Constraints: ${constraints}
-    `;
+    const userMessage = `User text: ${user_text || ''}
+Audience: ${audience || 'none'}
+Tone: ${tone || 'none'}
+Constraints: ${constraints || 'none'}`;
 
     const payload = {
-      model: "llama3-8b",   // WORKING MODEL ✔
+      model: MODEL,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: userMessage }
       ],
       temperature: 0.2,
-      max_tokens: 200
+      max_tokens: 150
     };
 
-    // Validate environment variables
     if (!process.env.GORQ_KEY || !process.env.GORQ_API_URL) {
-      return res.status(500).json({
-        success: false,
-        error: "Missing GROQ_API_URL or GORQ_KEY in environment."
-      });
+      console.error("Missing GORQ env vars");
+      return res.status(500).json({ success: false, error: "Server not configured (missing GORQ env vars)" });
     }
 
-    // AXIOS REQUEST
     const r = await axios.post(process.env.GORQ_API_URL, payload, {
       headers: {
         Authorization: `Bearer ${process.env.GORQ_KEY}`,
         "Content-Type": "application/json"
       },
-      validateStatus: () => true, // allow 400/500 for error forwarding
+      validateStatus: () => true, // allow non-2xx to inspect body
       timeout: 20000
     });
 
-    // If Groq returns 4xx/5xx → forward error
     if (r.status < 200 || r.status >= 300) {
-      console.error("Groq Error:", r.status, r.data);
-      return res.status(400).json({
-        success: false,
-        groq_status: r.status,
-        groq_body: r.data
-      });
+      console.error("Groq returned error:", r.status, r.data);
+      return res.status(r.status).json({ success: false, groq_status: r.status, groq_body: r.data });
     }
 
-    // Extract model response
     const output = r.data?.choices?.[0]?.message?.content || "";
-
-    res.json({
-      success: true,
-      data: String(output)
-    });
-
+    return res.json({ success: true, data: String(output) });
   } catch (err) {
-    console.error("Server error:", err);
-    res.status(500).json({
-      success: false,
-      error: err.message || "Server crashed"
-    });
+    console.error("Server error:", err?.response?.data || err.message || err);
+    return res.status(500).json({ success: false, error: err.message || "server error" });
   }
 });
 
-// START SERVER
 app.listen(PORT, () => {
-  console.log(`Backend running on PORT ${PORT}`);
+  console.log(`Backend listening on port ${PORT} — MODEL=${MODEL}`);
 });
