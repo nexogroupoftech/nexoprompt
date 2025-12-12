@@ -1,5 +1,5 @@
 // If backend and frontend are hosted together on Vercel, keep this empty:
-const API_BASE = ""; 
+const API_BASE = "https://nexoprompt.onrender.com"; 
 
 // If backend runs local, change to:  "http://localhost:3001"
 // Example: const API_BASE = "http://localhost:3001";
@@ -70,3 +70,4 @@ document.addEventListener("click", e => {
 
 // bind button
 $("generateBtn").addEventListener("click", generatePrompts);
+
