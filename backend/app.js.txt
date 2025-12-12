@@ -9,54 +9,58 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
 
-// ================== SYSTEM PROMPT ==================
 const SYSTEM_PROMPT = `
 You are PromptAdvisor, an expert prompt engineer.
-Your job is to turn the user's goal into 3 clear prompts:
-1) SHORT prompt (1–2 lines)
-2) BALANCED prompt (3–5 lines)
-3) ADVANCED prompt (5–8 lines with constraints)
-Keep answers short and cheap to generate.
+Your job is to return 3 prompts: SHORT, BALANCED, ADVANCED.
+Keep replies short.
 `;
-// ===================================================
 
+// simple health route
+app.get('/', (req, res) => res.send('PromptAdvisor backend is up'));
+
+// main route
 app.post('/api/generate', async (req, res) => {
   try {
-    const { user_text, audience, tone, constraints } = req.body;
+    const { user_text, audience, tone, constraints } = req.body || {};
+    const userMessage = `User input: ${user_text || ''}
+Audience: ${audience || 'none'}
+Tone: ${tone || 'none'}
+Constraints: ${constraints || 'none'}`;
 
-    const userMessage = `
-User input: ${user_text}
-Audience: ${audience || "none"}
-Tone: ${tone || "none"}
-Constraints: ${constraints || "none"}
-`;
-
+    // build Groq request
     const payload = {
-      model: "llama3-8b-8192",   // 🔥 CHEAP + FAST MODEL
+      model: "llama3-8b-8192",
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: userMessage }
       ],
-      temperature: 0.2,   // 🔥 CHEAPEST SETTING
-      max_tokens: 120     // 🔥 VERY CHEAP LIMIT
+      temperature: 0.2,
+      max_tokens: 120
     };
+
+    if (!process.env.GORQ_API_URL || !process.env.GORQ_KEY) {
+      console.error('Missing GORQ_API_URL or GORQ_KEY in env');
+      return res.status(500).json({ success: false, error: 'Server not configured' });
+    }
 
     const r = await axios.post(process.env.GORQ_API_URL, payload, {
       headers: {
-        "Authorization": `Bearer ${process.env.GORQ_KEY}`,
-        "Content-Type": "application/json"
-      }
+        Authorization: `Bearer ${process.env.GORQ_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 20000
     });
 
-    const output = r.data.choices[0].message.content;
-
-    res.json({ success: true, data: output });
-
+    const output = r?.data?.choices?.[0]?.message?.content || r?.data;
+    res.json({ success: true, data: String(output) });
   } catch (err) {
-    res.json({ success: false, error: err.message });
+    console.error('API error:', err?.response?.data || err.message || err);
+    res.status(500).json({ success: false, error: err?.message || 'server error' });
   }
 });
 
+// start server
 app.listen(PORT, () => {
-  console.log(`🔥 Backend running on http://localhost:${PORT}`);
+  console.log(`Backend listening on port ${PORT}`);
+  console.log('GORQ_API_URL present?', !!process.env.GORQ_API_URL);
 });
