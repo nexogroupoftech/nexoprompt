@@ -1,8 +1,8 @@
-// backend/app.js — robust, automatic model fallback
-require('dotenv').config();
-const express = require('express');
-const axios = require('axios');
-const cors = require('cors');
+// backend/app.js
+require("dotenv").config();
+const express = require("express");
+const axios = require("axios");
+const cors = require("cors");
 
 const app = express();
 app.use(cors());
@@ -10,88 +10,72 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
 
-// Candidate models (order = try first → last)
-const CANDIDATES = [
-  "mixtral-8x7b",   // good quality, often available
-  "llama3-70b",     // stronger (may be rate/credit heavy)
-  "llama3-8b"       // smaller (may not be granted for your key)
-];
-
-// System prompt
-const SYSTEM_PROMPT = `
-You are PromptAdvisor, a professional prompt engineer.
-Produce SHORT, BALANCED and ADVANCED prompts.
-Keep output concise.
-`;
-
-// helper: call Groq with given model
-async function callGroq(model, payload) {
-  const body = { ...payload, model };
-  const r = await axios.post(process.env.GORQ_API_URL, body, {
-    headers: {
-      Authorization: `Bearer ${process.env.GORQ_KEY}`,
-      "Content-Type": "application/json"
-    },
-    validateStatus: () => true,
-    timeout: 20000
-  });
-  return r;
+// MAP your UI model names → REAL Groq models
+function mapModel(uiModel) {
+  if (uiModel === "llama3-8b-8192") return "mixtral-8x7b";  
+  if (uiModel === "llama3-70b-8192") return "llama3-70b";  
+  return "mixtral-8x7b";  // default fallback
 }
 
-// health
-app.get('/', (req, res) => res.json({ status: "ok", candidates: CANDIDATES }));
+const SYSTEM_PROMPT = `
+You are PromptAdvisor, an expert prompt engineer.
+Generate high-quality SHORT, BALANCED, and ADVANCED prompts.
+Keep responses clean and structured.
+`;
 
-app.post('/api/generate', async (req, res) => {
+app.get("/", (req, res) => res.json({ status: "ok" }));
+
+app.post("/api/generate", async (req, res) => {
   try {
-    if (!process.env.GORQ_KEY || !process.env.GORQ_API_URL) {
-      return res.status(500).json({ success: false, error: "Missing GORQ env vars" });
-    }
+    const { user_text, audience, tone, constraints, model } = req.body;
 
-    const { user_text, audience, tone, constraints } = req.body || {};
-    const userMessage = `User text: ${user_text || ''}
-Audience: ${audience || 'none'}
-Tone: ${tone || 'none'}
-Constraints: ${constraints || 'none'}`;
+    const REAL_MODEL = mapModel(model);  // 🔥 Use your model name → real Groq model
+    console.log("UI model:", model, "→ Using Groq model:", REAL_MODEL);
 
-    const basePayload = {
+    const userMessage = `
+User: ${user_text}
+Audience: ${audience}
+Tone: ${tone}
+Constraints: ${constraints}
+    `;
+
+    const payload = {
+      model: REAL_MODEL,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: userMessage }
       ],
       temperature: 0.2,
-      max_tokens: 150
+      max_tokens: 200
     };
 
-    // Try candidates in order
-    let lastErr = null;
-    for (const model of CANDIDATES) {
-      console.log("Trying model:", model);
-      const r = await callGroq(model, basePayload);
+    const r = await axios.post(process.env.GORQ_API_URL, payload, {
+      headers: {
+        Authorization: `Bearer ${process.env.GORQ_KEY}`,
+        "Content-Type": "application/json"
+      },
+      validateStatus: () => true
+    });
 
-      // If Groq returned 2xx -> success
-      if (r.status >= 200 && r.status < 300) {
-        const output = r.data?.choices?.[0]?.message?.content || r.data;
-        return res.json({ success: true, model_used: model, data: String(output) });
-      }
-
-      // keep last error info to return if all fail
-      lastErr = { model, status: r.status, body: r.data };
-      console.warn("Model failed:", model, r.status, r.data);
-      // if 401/403 probably key issue — break early
-      if (r.status === 401 || r.status === 403) break;
+    if (r.status < 200 || r.status >= 300) {
+      return res.json({
+        success: false,
+        groq_status: r.status,
+        groq_body: r.data
+      });
     }
 
-    // if we get here, none worked
-    return res.status(400).json({
-      success: false,
-      error: "All candidate models failed or are inaccessible",
-      tried: lastErr
+    const output = r.data.choices?.[0]?.message?.content || "";
+    res.json({
+      success: true,
+      model_used: REAL_MODEL,
+      data: output
     });
 
   } catch (err) {
-    console.error("Server error:", err?.response?.data || err.message || err);
-    return res.status(500).json({ success: false, error: err.message || "server error" });
+    console.error("SERVER ERROR:", err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
-app.listen(PORT, () => console.log(`Backend running on port ${PORT}`));
+app.listen(PORT, () => console.log("Backend running on port", PORT));
